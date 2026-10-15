@@ -1,0 +1,14 @@
+# Python bytecode and local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.vscode/
+
+# Local downloads and test artifacts
+downloads/
+
+# Never commit local AWS credentials or profile files
+.aws/
+.aws-credentials
+.env
