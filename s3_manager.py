@@ -17,7 +17,11 @@ class S3OperationError(RuntimeError):
 
 
 class S3Manager:
-    """Perform file and object operations against one S3 bucket."""
+    """Centralize every S3 operation for one configured bucket.
+
+    The CLI calls these methods instead of making AWS requests itself. Credentials
+    are loaded by Boto3 from the selected AWS CLI profile or its default chain.
+    """
 
     def __init__(
         self,
@@ -117,7 +121,7 @@ class S3Manager:
             # The resource collection automatically retrieves every page of matching objects.
             objects: list[dict[str, Any]] = []
             for item in self.bucket.objects.filter(Prefix=prefix):
-                # Keep the same plain-dictionary format that the CLI already displays.
+                # Convert resource attributes to the dictionary format displayed by the CLI.
                 objects.append(
                     {
                         "Key": item.key,
@@ -166,6 +170,7 @@ class S3Manager:
         # Avoid leading/trailing slashes when composing prefix/filename keys.
         clean_prefix = prefix.strip("/")
         for file_path in file_paths:
+            # Use the local file's basename as the S3 object name, not its full local path.
             source = Path(file_path).expanduser()
             key = f"{clean_prefix}/{source.name}" if clean_prefix else source.name
             try:
@@ -202,6 +207,7 @@ class S3Manager:
         # Keep one outcome per item so a failed object doesn't hide successful ones.
         results: list[dict[str, str]] = []
         for item in self.list_objects(prefix=prefix):
+            # Keep the remote key and map it to a validated local path under the target folder.
             key = item["Key"]
             try:
                 target = self._safe_batch_target(root, key, prefix)
@@ -219,6 +225,7 @@ class S3Manager:
         results: list[dict[str, str]] = []
         # Attempt each already-confirmed key and record failures individually.
         for key in keys:
+            # A failure for one key should not prevent the remaining confirmed deletes.
             try:
                 self.delete_object(key)
                 results.append({"status": "deleted", "key": key, "message": "Delete request sent"})

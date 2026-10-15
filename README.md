@@ -74,6 +74,10 @@ If the bucket does not exist, ask the AWS account owner whether you should creat
 
 ## 3. Install and start the application
 
+### Python file naming
+
+Python module and test names use lowercase `snake_case`: `main.py` is the conventional CLI entry point, `s3_manager.py` contains the `S3Manager` class and all S3 operations, and `tests/test_s3_manager.py` contains offline tests. Use lowercase words separated by underscores for any new Python filenames.
+
 Open this project folder in VS Code. In its terminal, create/activate an environment if desired, install the listed dependency, and launch the app with the same profile:
 
 ```powershell
@@ -114,6 +118,8 @@ Batch operations report per-item `uploaded`/`downloaded`/`deleted`, `skipped`, o
 ### Sample menu runs (illustrative)
 
 The transcripts below show representative prompts and output after you start the app. Names, sizes, timestamps, and response details are examples; actual output depends on your files and S3 responses. Menu operations that access AWS will still return `403 Forbidden` until the selected profile is authorized for this bucket. Do not copy real payment/customer data into practice files.
+
+Run one operation at a time: enter its menu number, respond to its prompts, then read the result before selecting another option. Upload/update print a local-file-to-S3-key summary; list/search print the key, size, and modified time; download prints its destination path; batch operations print one status per item and a final count. `ERROR:` means AWS or a local operation failed. A `skipped` status means an existing file was intentionally left unchanged.
 
 **Option 0 — exit**
 

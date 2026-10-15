@@ -1,4 +1,8 @@
-"""Beginner-friendly menu CLI for managing files in Amazon S3."""
+"""Beginner-friendly CLI entry point for the S3 file manager.
+
+Run with ``python main.py --profile PROFILE_NAME``. This module handles prompts
+and output; S3Manager in s3_manager.py performs the AWS resource operations.
+"""
 
 import argparse
 from pathlib import Path
@@ -39,7 +43,7 @@ def show_objects(objects: list[dict]) -> None:
     print(f"Found {len(objects)} object(s):")
     # Each list result has an S3 key, byte size, and last-modified timestamp.
     for item in objects:
-        # S3 provides the object key, byte size, and last-modified timestamp.
+        # Display object metadata only; the contents of files are not printed.
         print(f"  {item['Key']} | {item['Size']} bytes | {item['LastModified']}")
 
 
@@ -51,6 +55,7 @@ def show_batch_results(results: list[dict[str, str]]) -> None:
         return
     # Print each result separately so failures and skips are visible.
     for result in results:
+        # Status identifies whether this file was processed, skipped, or failed.
         print(f"{result['status'].upper():10} {result['key']} — {result['message']}")
     # Count statuses (uploaded, skipped, failed, etc.) for a quick summary.
     counts: dict[str, int] = {}
@@ -208,7 +213,7 @@ def run_menu(manager: S3Manager) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     """Create the manager, attempt a safe connection check, and start the CLI."""
-    # Build a parser so users can choose a named AWS CLI profile without putting keys in code.
+    # Accept a profile name so Boto3 can load credentials outside this source file.
     parser = argparse.ArgumentParser(description="Manage objects in the configured S3 bucket.")
     # If omitted, Boto3 uses its normal default credential chain.
     parser.add_argument("--profile", help="AWS CLI profile name, for example payment-dev")
