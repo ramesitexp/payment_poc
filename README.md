@@ -76,7 +76,7 @@ If the bucket does not exist, ask the AWS account owner whether you should creat
 
 ### Python file naming
 
-Python module and test names use lowercase `snake_case`: `main.py` is the conventional CLI entry point, `s3_manager.py` contains the `S3Manager` class and all S3 operations, and `tests/test_s3_manager.py` contains offline tests. Use lowercase words separated by underscores for any new Python filenames.
+Python module and test names use lowercase `snake_case`: `main.py` is the CLI entry point and contains the Boto3 setup, S3 operation functions, and menu. `tests/test_main.py` contains offline tests. Use lowercase words separated by underscores for any new Python filenames.
 
 Open this project folder in VS Code. In its terminal, create/activate an environment if desired, install the listed dependency, and launch the app with the same profile:
 
@@ -95,7 +95,7 @@ On startup the program makes one read-only S3 check, `HeadBucket`, to confirm ac
 
 ### Run offline tests
 
-Run `python -m unittest discover -s tests -v` from the project folder. The unit tests mock all AWS clients and use temporary local files, so they do not require credentials and do not change the bucket.
+Run `python -m unittest discover -s tests -v` from the project folder. The unit tests mock Boto3 resources and use temporary local files, so they do not require credentials and do not change the bucket.
 
 ## 4. Menu operations and practical examples
 
@@ -247,25 +247,20 @@ This is an AWS authorization response, not a local-path or Python setup problem.
 
 ## 5. What the code does
 
-### `s3_manager.py` — class-based Boto3 S3 resource
+### `main.py` — one simple Boto3-based program
 
-- `S3Manager.__init__`: creates one Boto3 `Session`, one S3 resource (`session.resource("s3")`), and a bucket resource. No AWS keys are passed to the class or stored in source; Boto3 gets credentials from the selected AWS CLI profile/environment.
-- `connect`: calls `bucket.load()`. The resource makes a read-only `HeadBucket` request to check access without requesting account identity.
-- `object_exists`: calls `bucket.Object(key).load()` to fetch object metadata only; a 404 means absent, while access/network errors are surfaced.
-- `upload_file`: calls `bucket.upload_file(Filename, Key)`. Boto3's transfer manager handles multipart uploads; this high-level transfer returns no S3 response body, so the method returns a local summary.
-- `list_objects`: iterates `bucket.objects.filter(Prefix=prefix)`. The Boto3 resource collection handles pagination; each object summary is converted to a dictionary with `Key`, `Size`, and `LastModified` for the menu.
-- `download_file`: calls `bucket.download_file(Key, Filename)` and streams the object to disk. It returns the local destination path.
-- `delete_object`: calls `s3_resource.Object(Bucket, Key).delete()` and returns S3's response dictionary. The CLI requires confirmation before invoking it.
-- `search_by_prefix`: validates the prefix then delegates to paginated listing.
-- `batch_upload`, `batch_download`, `batch_delete`: run the single-item operations in a loop and return one status record per item. Batch download prevents S3 keys from escaping the chosen local directory.
-- `_aws_error` and `_validate_key`: convert AWS client/network failures to readable messages and reject blank object keys.
+There is no separate S3 manager class/module. `main()` creates one Boto3 `Session`, one S3 resource with `session.resource("s3")`, and one bucket reference; the small functions in this same file use those objects for operations. Boto3 reads credentials from the selected AWS CLI profile/environment; credentials are never placed in source code.
 
-### `main.py`
-
-- `ask_yes_no`: treats only `y`/`yes` as approval, so destructive actions default to no.
-- `show_objects` and `show_batch_results`: format API results and per-file outcomes for a beginner-readable terminal view.
-- `run_menu`: collects user input, validates risky operations with confirmations, and routes each selection to `S3Manager`.
-- `main`: constructs the fixed bucket/region manager, attempts the non-destructive connection check, and starts the menu even when initial credentials are not ready.
+- `connect(bucket)`: calls `bucket.load()` for a read-only bucket access check.
+- `object_exists(s3, bucket_name, key)`: calls `s3.Object(bucket_name, key).load()` for metadata; a 404 means missing, while other failures are shown.
+- `upload_file(bucket, file_path, key)`: calls `bucket.upload_file(Filename, Key)`; Boto3 handles large-file multipart transfers.
+- `list_objects(bucket, prefix)`: iterates `bucket.objects.filter(Prefix=prefix)`. The Boto3 collection handles pagination, and results are converted to simple dictionaries for display.
+- `download_file(bucket, key, destination)`: calls `bucket.download_file(Key, Filename)` and streams the object to disk.
+- `delete_object(s3, bucket_name, key)`: calls `s3.Object(Bucket, Key).delete()` after the CLI's confirmation.
+- `search_by_prefix`, `batch_upload`, `batch_download`, and `batch_delete`: reuse the simple single-operation functions and return a status for each item. Batch download blocks keys that would escape the chosen local directory.
+- `run_menu(s3, bucket)`: handles user prompts and confirmation checks, then calls the operation functions above.
+- `main()`: parses `--profile`, creates the Boto3 resource/bucket, checks access, and starts the menu.
+- `aws_error` and `validate_key`: provide readable errors and reject blank keys.
 
 AWS error responses are converted to an actionable `ERROR:` message. For `AccessDenied`, verify the active AWS identity, IAM permissions, bucket policy, and region rather than putting credentials into Python.
 
