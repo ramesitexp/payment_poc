@@ -63,6 +63,7 @@ def object_exists(s3: Any, bucket_name: str, key: str) -> bool:
         s3.Object(bucket_name, key).load()
         return True
     except ClientError as error:
+        # Only a not-found response means the key is absent; permission failures must surface.
         code = error.response.get("Error", {}).get("Code", "")
         status = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
         if code in {"404", "NoSuchKey", "NotFound"} or status == 404:
@@ -153,14 +154,17 @@ def run_menu(s3: Any, bucket: Any) -> None:
             if choice == "1":
                 source = Path(input("Local file path: ").strip().strip('"')).expanduser()
                 key = input(f"S3 key [default: {source.name}]: ").strip() or source.name
+                # Creating an existing key overwrites it, so require opt-in first.
                 if object_exists(s3, bucket.name, key) and not ask_yes_no(f"{key!r} exists. Replace it?"):
                     print("Create cancelled; the existing object was left unchanged.")
                     continue
                 print(f"Created: {upload_file(bucket, source, key)}")
             elif choice == "2":
+                # A blank prefix lists the whole bucket; a value narrows results by key.
                 show_objects(list_objects(bucket, input("Optional prefix (blank lists all): ").strip()))
             elif choice == "3":
                 key = input("S3 object key: ").strip()
+                # Keep downloads in a local folder by default, using the S3 key's filename.
                 default_path = Path("downloads") / Path(key).name
                 entered = input(f"Local destination [default: {default_path}]: ").strip().strip('"')
                 target = Path(entered).expanduser() if entered else default_path
@@ -171,6 +175,7 @@ def run_menu(s3: Any, bucket: Any) -> None:
             elif choice == "4":
                 source = Path(input("Replacement local file path: ").strip().strip('"')).expanduser()
                 key = input(f"S3 key [default: {source.name}]: ").strip() or source.name
+                # Update uses the same upload operation but always confirms create or replace.
                 action = "replace" if object_exists(s3, bucket.name, key) else "create"
                 if not ask_yes_no(f"Confirm {action} for {key!r}?"):
                     print("Update cancelled.")
@@ -178,6 +183,7 @@ def run_menu(s3: Any, bucket: Any) -> None:
                 print(f"Updated: {upload_file(bucket, source, key)}")
             elif choice == "5":
                 key = input("S3 object key to delete: ").strip()
+                # Deletion is irreversible from this CLI, so only an explicit yes proceeds.
                 if not ask_yes_no(f"Request deletion of {key!r} from S3?"):
                     print("Delete cancelled.")
                     continue
