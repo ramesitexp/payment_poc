@@ -38,16 +38,17 @@ class TestS3Manager(unittest.TestCase):
         self.manager.profile_name = None
         self.manager.session = None
         self.manager.s3 = MagicMock()
+        self.manager.bucket = MagicMock()
 
     def test_connect_checks_bucket_without_identity_lookup(self) -> None:
         result = self.manager.connect()
 
         self.assertEqual(result["bucket"], BUCKET)
         self.assertEqual(result["region"], REGION)
-        self.manager.s3.head_bucket.assert_called_once_with(Bucket=BUCKET)
+        self.manager.bucket.load.assert_called_once_with()
 
     def test_connect_converts_aws_error(self) -> None:
-        self.manager.s3.head_bucket.side_effect = make_client_error("AccessDenied", 403)
+        self.manager.bucket.load.side_effect = make_client_error("AccessDenied", 403)
 
         with self.assertRaisesRegex(S3OperationError, "AccessDenied"):
             self.manager.connect()
@@ -59,14 +60,14 @@ class TestS3Manager(unittest.TestCase):
         self.assertIn("Never paste access keys", str(error))
 
     def test_object_exists_true_and_missing(self) -> None:
-        self.manager.s3.head_object.return_value = {"ContentLength": 10}
+        self.manager.s3.Object.return_value.load.return_value = {"ContentLength": 10}
         self.assertTrue(self.manager.object_exists("folder/file.txt"))
 
-        self.manager.s3.head_object.side_effect = make_client_error("404", 404, "missing")
+        self.manager.s3.Object.return_value.load.side_effect = make_client_error("404", 404, "missing")
         self.assertFalse(self.manager.object_exists("folder/missing.txt"))
 
     def test_object_exists_does_not_hide_access_denied(self) -> None:
-        self.manager.s3.head_object.side_effect = make_client_error("403", 403, "denied")
+        self.manager.s3.Object.return_value.load.side_effect = make_client_error("403", 403, "denied")
 
         with self.assertRaisesRegex(S3OperationError, "403"):
             self.manager.object_exists("private/file.txt")
@@ -83,7 +84,7 @@ class TestS3Manager(unittest.TestCase):
             result = self.manager.upload_file(source, "incoming/sample.txt")
 
             self.assertEqual(result["key"], "incoming/sample.txt")
-            self.manager.s3.upload_file.assert_called_once_with(str(source), BUCKET, "incoming/sample.txt")
+            self.manager.bucket.upload_file.assert_called_once_with(str(source), "incoming/sample.txt")
             with self.assertRaises(FileNotFoundError):
                 self.manager.upload_file(Path(temp_dir) / "absent.txt", "absent.txt")
 
@@ -91,24 +92,29 @@ class TestS3Manager(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             source = Path(temp_dir) / "sample.txt"
             source.write_text("sample", encoding="utf-8")
-            self.manager.s3.upload_file.side_effect = S3UploadFailedError("transfer failed")
+            self.manager.bucket.upload_file.side_effect = S3UploadFailedError("transfer failed")
 
             with self.assertRaisesRegex(S3OperationError, "transfer failed"):
                 self.manager.upload_file(source, "sample.txt")
 
     def test_list_objects_combines_paginated_results(self) -> None:
-        first = {"Key": "incoming/a.txt", "Size": 1}
-        second = {"Key": "incoming/b.txt", "Size": 2}
-        paginator = self.manager.s3.get_paginator.return_value
-        paginator.paginate.return_value = [{"Contents": [first]}, {"Contents": [second]}]
+        first = Mock(key="incoming/a.txt", size=1, last_modified="time-a")
+        second = Mock(key="incoming/b.txt", size=2, last_modified="time-b")
+        self.manager.bucket.objects.filter.return_value = [first, second]
 
         result = self.manager.list_objects(prefix="incoming/")
 
-        self.assertEqual(result, [first, second])
-        paginator.paginate.assert_called_once_with(Bucket=BUCKET, Prefix="incoming/")
+        self.assertEqual(
+            result,
+            [
+                {"Key": "incoming/a.txt", "Size": 1, "LastModified": "time-a"},
+                {"Key": "incoming/b.txt", "Size": 2, "LastModified": "time-b"},
+            ],
+        )
+        self.manager.bucket.objects.filter.assert_called_once_with(Prefix="incoming/")
 
     def test_list_objects_handles_empty_bucket_page(self) -> None:
-        self.manager.s3.get_paginator.return_value.paginate.return_value = [{}]
+        self.manager.bucket.objects.filter.return_value = []
         self.assertEqual(self.manager.list_objects(), [])
 
     def test_download_creates_parent_folder_and_returns_destination(self) -> None:
@@ -119,14 +125,15 @@ class TestS3Manager(unittest.TestCase):
 
             self.assertEqual(result, target)
             self.assertTrue(target.parent.is_dir())
-            self.manager.s3.download_file.assert_called_once_with(BUCKET, "incoming/sample.txt", str(target))
+            self.manager.bucket.download_file.assert_called_once_with("incoming/sample.txt", str(target))
 
     def test_delete_returns_s3_response(self) -> None:
         response = {"ResponseMetadata": {"HTTPStatusCode": 204}}
-        self.manager.s3.delete_object.return_value = response
+        self.manager.s3.Object.return_value.delete.return_value = response
 
         self.assertEqual(self.manager.delete_object("incoming/sample.txt"), response)
-        self.manager.s3.delete_object.assert_called_once_with(Bucket=BUCKET, Key="incoming/sample.txt")
+        self.manager.s3.Object.assert_called_once_with(BUCKET, "incoming/sample.txt")
+        self.manager.s3.Object.return_value.delete.assert_called_once_with()
 
     def test_prefix_search_rejects_empty_prefix(self) -> None:
         with self.assertRaisesRegex(ValueError, "non-empty prefix"):

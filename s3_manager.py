@@ -32,7 +32,7 @@ class S3Manager:
         self.region = region
         # A profile name selects credentials stored by AWS CLI; None uses Boto3's default chain.
         self.profile_name = profile_name
-        # A session creates service clients using standard Boto3 credentials.
+        # A session reads the selected credentials once and creates an S3 resource.
         try:
             self.session = boto3.Session(profile_name=profile_name, region_name=region)
         except ProfileNotFound as error:
@@ -40,8 +40,9 @@ class S3Manager:
             raise S3OperationError(
                 f"AWS profile {profile_name!r} was not found. Configure it with AWS CLI first."
             ) from error
-        # The S3 client performs the bucket and object operations used by this app.
-        self.s3 = self.session.client("s3")
+        # Keep one object-oriented Boto3 S3 resource and bucket reference for all operations.
+        self.s3 = self.session.resource("s3")
+        self.bucket = self.s3.Bucket(bucket_name)
 
     @staticmethod
     def _aws_error(action: str, error: Exception) -> S3OperationError:
@@ -72,8 +73,8 @@ class S3Manager:
     def connect(self) -> dict[str, str]:
         """Verify access to the configured S3 bucket without fetching account identity."""
         try:
-            # HeadBucket is read-only and confirms the current credentials can reach this bucket.
-            self.s3.head_bucket(Bucket=self.bucket_name)
+            # Bucket.load() makes a read-only HeadBucket request to check access.
+            self.bucket.load()
             return {
                 "bucket": self.bucket_name,
                 "region": self.region,
@@ -85,8 +86,8 @@ class S3Manager:
         """Return whether an object exists; surface access and network errors."""
         key = self._validate_key(key)
         try:
-            # HEAD reads object metadata only; it does not download the object's body.
-            self.s3.head_object(Bucket=self.bucket_name, Key=key)
+            # Object.load() reads metadata only; it does not download the object's body.
+            self.s3.Object(self.bucket_name, key).load()
             return True
         except ClientError as error:
             code = error.response.get("Error", {}).get("Code", "")
@@ -104,8 +105,8 @@ class S3Manager:
         if not source.is_file():
             raise FileNotFoundError(f"Local file does not exist: {source}")
         try:
-            # upload_file manages multipart uploads for larger files automatically.
-            self.s3.upload_file(str(source), self.bucket_name, key)
+            # Bucket.upload_file() uses Boto3's transfer manager for large files too.
+            self.bucket.upload_file(str(source), key)
             return {"bucket": self.bucket_name, "key": key, "source": str(source)}
         except (ClientError, BotoCoreError, Boto3Error) as error:
             raise self._aws_error(f"Uploading {source}", error) from error
@@ -113,12 +114,17 @@ class S3Manager:
     def list_objects(self, prefix: str = "") -> list[dict[str, Any]]:
         """List every object whose key begins with prefix, handling pagination."""
         try:
-            # Ask Boto3 for a paginator so more than one response page is handled.
-            paginator = self.s3.get_paginator("list_objects_v2")
-            # Accumulate each page's Contents entries into one result list.
+            # The resource collection automatically retrieves every page of matching objects.
             objects: list[dict[str, Any]] = []
-            for page in paginator.paginate(Bucket=self.bucket_name, Prefix=prefix):
-                objects.extend(page.get("Contents", []))
+            for item in self.bucket.objects.filter(Prefix=prefix):
+                # Keep the same plain-dictionary format that the CLI already displays.
+                objects.append(
+                    {
+                        "Key": item.key,
+                        "Size": item.size,
+                        "LastModified": item.last_modified,
+                    }
+                )
             return objects
         except (ClientError, BotoCoreError) as error:
             raise self._aws_error(f"Listing objects with prefix {prefix!r}", error) from error
@@ -130,8 +136,8 @@ class S3Manager:
         try:
             # Create missing local folders before saving the downloaded file.
             target.parent.mkdir(parents=True, exist_ok=True)
-            # download_file streams the object to disk rather than holding it all in memory.
-            self.s3.download_file(self.bucket_name, key, str(target))
+            # Bucket.download_file() streams the object to disk rather than holding it in memory.
+            self.bucket.download_file(key, str(target))
             return target
         except (ClientError, BotoCoreError, Boto3Error, OSError) as error:
             raise self._aws_error(f"Downloading {key!r}", error) from error
@@ -140,8 +146,8 @@ class S3Manager:
         """Delete one S3 object. The CLI asks for confirmation before calling this."""
         key = self._validate_key(key)
         try:
-            # The response is returned to the caller; callers should confirm first.
-            return self.s3.delete_object(Bucket=self.bucket_name, Key=key)
+            # Delete through the resource object; the CLI confirms before calling this method.
+            return self.s3.Object(self.bucket_name, key).delete()
         except (ClientError, BotoCoreError) as error:
             raise self._aws_error(f"Deleting {key!r}", error) from error
 

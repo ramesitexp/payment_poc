@@ -241,15 +241,15 @@ This is an AWS authorization response, not a local-path or Python setup problem.
 
 ## 5. What the code does
 
-### `s3_manager.py`
+### `s3_manager.py` — class-based Boto3 S3 resource
 
-- `S3Manager.__init__`: creates a Boto3 `Session` and S3 client for the configured region. It does not accept or store keys; the normal credential chain reads the CLI profile/environment.
-- `connect`: calls S3 `head_bucket(Bucket=...)` to test bucket access without retrieving or displaying account identity. `HeadBucket` normally returns an empty success response.
-- `object_exists`: calls `head_object(Bucket=..., Key=...)`; a 404 means absent, while access/network errors are reported instead of being mistaken for absence.
-- `upload_file`: calls `upload_file(Filename, Bucket, Key)`. This Boto3 high-level transfer handles multipart uploads; it returns no S3 response body, so the app returns a local summary instead.
-- `list_objects`: uses a `list_objects_v2` paginator with `Bucket` and `Prefix`. Each page may contain `Contents` entries such as `Key`, `Size`, and `LastModified`; pagination prevents silently missing later pages.
-- `download_file`: calls `download_file(Bucket, Key, Filename)` and streams the object to disk. It returns the destination path.
-- `delete_object`: calls `delete_object(Bucket, Key)`. S3 returns a response dictionary (often including `DeleteMarker` or `VersionId` when versioning applies). The CLI asks for confirmation first.
+- `S3Manager.__init__`: creates one Boto3 `Session`, one S3 resource (`session.resource("s3")`), and a bucket resource. No AWS keys are passed to the class or stored in source; Boto3 gets credentials from the selected AWS CLI profile/environment.
+- `connect`: calls `bucket.load()`. The resource makes a read-only `HeadBucket` request to check access without requesting account identity.
+- `object_exists`: calls `bucket.Object(key).load()` to fetch object metadata only; a 404 means absent, while access/network errors are surfaced.
+- `upload_file`: calls `bucket.upload_file(Filename, Key)`. Boto3's transfer manager handles multipart uploads; this high-level transfer returns no S3 response body, so the method returns a local summary.
+- `list_objects`: iterates `bucket.objects.filter(Prefix=prefix)`. The Boto3 resource collection handles pagination; each object summary is converted to a dictionary with `Key`, `Size`, and `LastModified` for the menu.
+- `download_file`: calls `bucket.download_file(Key, Filename)` and streams the object to disk. It returns the local destination path.
+- `delete_object`: calls `s3_resource.Object(Bucket, Key).delete()` and returns S3's response dictionary. The CLI requires confirmation before invoking it.
 - `search_by_prefix`: validates the prefix then delegates to paginated listing.
 - `batch_upload`, `batch_download`, `batch_delete`: run the single-item operations in a loop and return one status record per item. Batch download prevents S3 keys from escaping the chosen local directory.
 - `_aws_error` and `_validate_key`: convert AWS client/network failures to readable messages and reject blank object keys.
